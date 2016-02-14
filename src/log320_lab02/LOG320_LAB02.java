@@ -3,6 +3,11 @@ package log320_lab02;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
 import java.util.Stack;
 
 /**
@@ -11,12 +16,19 @@ import java.util.Stack;
  */
 public class LOG320_LAB02 {
 
+    private static final int CASENULL = 0;
+    private static final int OCCUPE = 1;
+    private static final int VIDE = 2;
+
     private static int plateau[][];
+    private static int maxMove;
+    private static HashMap<Integer, List<Map<String, Coup>>> traceurHash = new HashMap<>(20000);
     private static final Stack<Coup> solution = new Stack();
     private static int nbNoeudsExplores = 0;
     private static boolean puzzleValide = true;
     private static int nbLignes;
     private static int nbColones;
+    private static int nbUn;
 
     /**
      * @param args the command line arguments
@@ -38,35 +50,52 @@ public class LOG320_LAB02 {
 
         System.out.println("Plateau initial :");
         afficherPlateau();
+        maxMove = getMaxMove();
+        nbUn = maxMove;
 
-        Timer.start();
-        puzzleValide = resoudre();
-        Timer.stop();
+        try {
+            Timer.start();
+            puzzleValide = resoudre(1);
+            Timer.stop();
+        } catch (OutOfMemoryError e) {
+            System.err.println("StackOverflowError !!!");
+            puzzleValide = false;
+        }
 
         afficherResultat();
     }
 
-    // Pour ameliorer le temps d'execution, il faudrait partir 4 Thread. 
-    // Chacun testera une direction de depart {Haut,Bas,Gauche,Droite}.
-    // Regle :
-    //    1 : Le seul mouvement possible est le saut par-dessus une tige si la destination est libre;
-    //    2 : Lors d’un saut par dessus une tige, la tige en question est éliminée du plateau;
-    //    3 : Il y a 4 directions possibles : haut, bas, gauche, droite
-    private static boolean resoudre() {
-        nbNoeudsExplores++;
+    private static int getMaxMove() {
+        int nbUnt = 0;
+        for (int i = 0; i < nbLignes; i++) {
+            for (int j = 0; j < nbColones; j++) {
+                if (plateau[i][j] == 1) {
+                    nbUnt++;
+                }
+            }
 
-        if (estResolue()) {
+        }
+
+        return nbUnt;
+    }
+
+    private static boolean dejaTest = false;
+    private static int nbElagage = 0;
+
+    private static boolean resoudre(int move) {
+        if (nbUn == 1) {
             return true;
         }
 
-        for (int i = 0; i < nbLignes; i++) {
+        nbNoeudsExplores++;
+        for (int i = 0; move <= 31 && i < nbLignes; i++) {
             for (int j = 0; j < nbColones; j++) {
-                Position position = new Position(i, j);
-
-                if (plateau[i][j] != 0 && plateau[i][j] != 2) {
+                if (plateau[i][j] == OCCUPE) {
                     for (Mouvement mouvement : Mouvement.values()) {
-                        if (coupValide(position, mouvement)) {
-                            if (jouer(position, mouvement)) {
+                        Coup coup = new Coup(new Position(i, j), mouvement);
+                        if (move < maxMove && coupValide(coup) && !coupDejaConnu(coup)) {
+                            dejaTest = false;
+                            if (jouer(coup, move)) {
                                 return true;
                             }
                         }
@@ -79,116 +108,125 @@ public class LOG320_LAB02 {
         return false;
     }
 
-    private static boolean jouer(Position position, Mouvement mouvement) {
-        Coup coup = new Coup(position, mouvement);
-        // System.out.println("coup -> " + coup.toString());
-        //afficherPlateau();
+    private static boolean jouer(Coup coup, int move) {
+        // System.out.println("NB Noeud = " + nbNoeudsExplores);
+        faireDeplacement(coup);
 
-        // stocke resultat
-        solution.push(coup);
-
-        // essayer un prochain mouvement
-        if (resoudre()) {
+        if (resoudre(move + 1)) {
+            solution.push(coup);
             return true;
         }
 
-        //Rollback
-        retourArriere(position, mouvement);
-        solution.pop();
+        retourArriere(coup);
+
+        trace(coup);
 
         return false;
     }
 
-    private static void retourArriere(Position depart, Mouvement mouvement) {
-        switch (mouvement) {
-            case HAUT:
-                plateau[depart.x - 1][depart.y] = 1;
-                plateau[depart.x][depart.y] = 1;
-                plateau[depart.x - 2][depart.y] = 2;
-                break;
-            case BAS:
-                plateau[depart.x + 1][depart.y] = 1;
-                plateau[depart.x][depart.y] = 1;
-                plateau[depart.x + 2][depart.y] = 2;
-                break;
-            case DROITE:
-                plateau[depart.x][depart.y + 1] = 1;
-                plateau[depart.x][depart.y] = 1;
-                plateau[depart.x][depart.y + 2] = 2;
-                break;
-            case GAUCHE:
-                plateau[depart.x][depart.y - 1] = 1;
-                plateau[depart.x][depart.y] = 1;
-                plateau[depart.x][depart.y - 2] = 2;
-                break;
+    private static void trace(Coup coup) {
+        String copiePlateau = copiePlateauToString();
+        int hash = copiePlateau.hashCode();
+        if (traceurHash.containsKey(hash)) {
+            List<Map<String, Coup>> value = traceurHash.get(hash);
+            Map<String, Coup> h = new HashMap();
+            h.put(copiePlateau, coup);
+            value.add(h);
+            traceurHash.put(hash, value);
+        } else {
+            List<Map<String, Coup>> value = new ArrayList<>();
+            Map<String, Coup> h = new HashMap();
+            h.put(copiePlateau, coup);
+            value.add(h);
+            traceurHash.put(hash, value);
         }
     }
 
-    private static boolean estResolue() {
-        int nbTige = 0;
+    private static boolean coupDejaConnu(Coup coup) {
+        if (dejaTest) {
+            return false;
+        }
 
-        for (int i = 0; i < nbLignes; i++) {
-            for (int j = 0; j < nbColones; j++) {
-                if (plateau[i][j] == 1) {
-                    if (nbTige == 0) {
-                        nbTige++;
-                    } else {
-                        return false;
+        String copiePlateau = copiePlateauToString();
+        int hash = copiePlateau.hashCode();
+        if (traceurHash.containsKey(hash)) {
+            for (Map<String, Coup> h : traceurHash.get(hash)) {
+                Iterator it = h.entrySet().iterator();
+                while (it.hasNext()) {
+                    Map.Entry pair = (Map.Entry) it.next();
+                    Coup oldCoup = (Coup) pair.getValue();
+                    String plateauTrace = (String) pair.getKey();
+
+                    if (plateauTrace.equalsIgnoreCase(copiePlateau) && coup.equals(oldCoup)) {
+                        dejaTest = true;
+                        nbElagage++;
+                        return true;
                     }
                 }
             }
         }
 
-        return true;
+        return false;
     }
 
-    private static Position trouverDepart() {
+    private static String copiePlateauToString() {
+        StringBuilder sb = new StringBuilder(49);
         for (int i = 0; i < nbLignes; i++) {
             for (int j = 0; j < nbColones; j++) {
-                if (plateau[i][j] == 2) {
-                    return new Position(i, j);
-                }
+                sb.append(plateau[i][j]);
             }
         }
 
-        return null;
+        return sb.toString();
     }
 
-    // Regle :
-    //    1 : Le seul mouvement possible est le saut par-dessus une tige si la destination est libre;
-    //    2 : Lors d’un saut par dessus une tige, la tige en question est éliminée du plateau;
-    private static boolean coupValide(Position depart, Mouvement direction) {
-        switch (direction) {
+    //refactorer
+    private static void retourArriere(Coup coup) {
+        Position depart = coup.position;
+        nbUn++;
+        switch (coup.mouvement) {
+            case HAUT:
+                plateau[depart.x - 1][depart.y] = OCCUPE;
+                plateau[depart.x][depart.y] = OCCUPE;
+                plateau[depart.x - 2][depart.y] = VIDE;
+                break;
+            case BAS:
+                plateau[depart.x + 1][depart.y] = OCCUPE;
+                plateau[depart.x][depart.y] = OCCUPE;
+                plateau[depart.x + 2][depart.y] = VIDE;
+                break;
+            case DROITE:
+                plateau[depart.x][depart.y + 1] = OCCUPE;
+                plateau[depart.x][depart.y] = OCCUPE;
+                plateau[depart.x][depart.y + 2] = VIDE;
+                break;
+            case GAUCHE:
+                plateau[depart.x][depart.y - 1] = OCCUPE;
+                plateau[depart.x][depart.y] = OCCUPE;
+                plateau[depart.x][depart.y - 2] = VIDE;
+                break;
+        }
+    }
+
+    //refactorer
+    private static boolean coupValide(Coup coup) {
+        Position depart = coup.position;
+        switch (coup.mouvement) {
             case HAUT:
                 if (depart.x - 1 < 0 || depart.x - 2 < 0) {
                     return false;
                 }
 
-                if (plateau[depart.x - 1][depart.y] == 1 && plateau[depart.x - 2][depart.y] == 2) {
-                    // remove tige du plateau
-                    plateau[depart.x - 1][depart.y] = 2;
-
-                    // executer mouvement
-                    plateau[depart.x][depart.y] = 2;
-                    plateau[depart.x - 2][depart.y] = 1;
-
+                if (plateau[depart.x - 1][depart.y] == OCCUPE && plateau[depart.x - 2][depart.y] == VIDE) {
                     return true;
                 }
-
                 return false;
             case BAS:
                 if (depart.x + 1 >= nbLignes || depart.x + 2 >= nbLignes) {
                     return false;
                 }
 
-                if (plateau[depart.x + 1][depart.y] == 1 && plateau[depart.x + 2][depart.y] == 2) {
-                    // remove tige du plateau
-                    plateau[depart.x + 1][depart.y] = 2;
-
-                    // executer mouvement
-                    plateau[depart.x][depart.y] = 2;
-                    plateau[depart.x + 2][depart.y] = 1;
-
+                if (plateau[depart.x + 1][depart.y] == OCCUPE && plateau[depart.x + 2][depart.y] == VIDE) {
                     return true;
                 }
 
@@ -198,14 +236,7 @@ public class LOG320_LAB02 {
                     return false;
                 }
 
-                if (plateau[depart.x][depart.y + 1] == 1 && plateau[depart.x][depart.y + 2] == 2) {
-                    // remove tige du plateau
-                    plateau[depart.x][depart.y + 1] = 2;
-
-                    // executer mouvement
-                    plateau[depart.x][depart.y] = 2;
-                    plateau[depart.x][depart.y + 2] = 1;
-
+                if (plateau[depart.x][depart.y + 1] == OCCUPE && plateau[depart.x][depart.y + 2] == VIDE) {
                     return true;
                 }
 
@@ -215,31 +246,40 @@ public class LOG320_LAB02 {
                     return false;
                 }
 
-                if (plateau[depart.x][depart.y - 1] == 1 && plateau[depart.x][depart.y - 2] == 2) {
-                    // remove tige du plateau
-                    plateau[depart.x][depart.y - 1] = 2;
-
-                    // executer mouvement
-                    plateau[depart.x][depart.y] = 2;
-                    plateau[depart.x][depart.y - 2] = 1;
-
+                if (plateau[depart.x][depart.y - 1] == OCCUPE && plateau[depart.x][depart.y - 2] == VIDE) {
                     return true;
                 }
-
                 return false;
         }
 
         return false;
     }
 
-    private static boolean resoudreThread() {
-        Position depart = trouverDepart();
-        if (depart == null) {
-            System.out.println("Il y a aucun trou vide dans le plateau");
-            return false;
+    private static void faireDeplacement(Coup coup) {
+        Position depart = coup.position;
+        nbUn--;
+        switch (coup.mouvement) {
+            case HAUT:
+                plateau[depart.x - 1][depart.y] = VIDE;
+                plateau[depart.x][depart.y] = VIDE;
+                plateau[depart.x - 2][depart.y] = OCCUPE;
+                break;
+            case BAS:
+                plateau[depart.x + 1][depart.y] = VIDE;
+                plateau[depart.x][depart.y] = VIDE;
+                plateau[depart.x + 2][depart.y] = OCCUPE;
+                break;
+            case DROITE:
+                plateau[depart.x][depart.y + 1] = VIDE;
+                plateau[depart.x][depart.y] = VIDE;
+                plateau[depart.x][depart.y + 2] = OCCUPE;
+                break;
+            case GAUCHE:
+                plateau[depart.x][depart.y - 1] = VIDE;
+                plateau[depart.x][depart.y] = VIDE;
+                plateau[depart.x][depart.y - 2] = OCCUPE;
+                break;
         }
-
-        return true;
     }
 
     private static boolean lirePlateau(String path) throws IOException {
@@ -290,32 +330,38 @@ public class LOG320_LAB02 {
     }
 
     private static void afficherResultat() {
+        StringBuilder sb = new StringBuilder("Nombre de coup : " + solution.size() + ". Combinaisons : ");
+        for (Mouvement mv : Mouvement.values()) {
+            sb.append(mv.toString()).append(" ");
+        }
+
         if (puzzleValide) {
             afficherListeMouvement();
             System.out.println("Plateau final :");
             afficherPlateau();
-            System.out.println("Nombre de noeuds explore : " + nbNoeudsExplores);
-            System.out.format("Temps d'execution : %.18f secondes \n", Timer.getTime());
+            System.out.println(sb.toString());
         } else {
             System.out.println("Le puzzle ne peut pas etre resolue");
-            System.out.println("Nombre de noeuds explore : " + nbNoeudsExplores);
-            System.out.format("Temps d'execution : %.18f secondes \n", Timer.getTime());
         }
+
+        System.out.println("Nombre d'elagage de l'arbre : " + nbElagage);
+        System.out.println("Taille du traceur : " + traceurHash.size());
+        System.out.println("Nombre de noeuds explore : " + nbNoeudsExplores);
+        System.out.format("Temps d'execution : %.13f secondes \n", Timer.getTime());
     }
 
     private static void afficherListeMouvement() {
-        StringBuilder sb = new StringBuilder("Liste des mouvements pour obtenir la solution : \n");
+        System.out.println("Liste des mouvements pour obtenir la solution : \n");
+        Object[] coup = solution.toArray();
 
-        for (Coup coup : solution) {
-            sb.append(coup.toString());
-            sb.append("\n");
+        for (int i = coup.length - 1; i >= 0; i--) {
+            System.out.println(coup[i].toString());
         }
-
-        System.out.println(sb.toString());
+        System.out.println();
     }
 
     private static enum Mouvement {
-        DROITE, BAS, GAUCHE, HAUT;
+        GAUCHE, HAUT, BAS, DROITE;
     }
 
     public static class Timer {
@@ -345,6 +391,19 @@ public class LOG320_LAB02 {
             this.x = x;
             this.y = y;
         }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == null) {
+                return false;
+            }
+
+            if (obj instanceof Position) {
+                return this.x == ((Position) obj).x && this.y == ((Position) obj).y;
+            } else {
+                return false;
+            }
+        }
     }
 
     private static class Coup {
@@ -365,6 +424,19 @@ public class LOG320_LAB02 {
             sb.append(") deplacement a ");
             sb.append(mouvement.toString());
             return sb.toString();
+        }
+
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == null) {
+                return false;
+            }
+
+            if (obj instanceof Coup) {
+                return this.position.equals(((Coup) obj).position) && this.mouvement.equals(((Coup) obj).mouvement);
+            } else {
+                return false;
+            }
         }
     }
 }
